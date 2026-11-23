@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, rmdirSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, rmdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { test } from 'node:test';
-import { blockingAttempts, claim, interval, openJournal, parseKst, settle } from '../skills/snu-ssims-study-room/scripts/attempts.mjs';
+import { fileURLToPath } from 'node:url';
+import { blockingAttempts, claim, interval, openJournal, parseKst, run, settle } from '../skills/snu-ssims-study-room/scripts/attempts.mjs';
 
 const start = '2099-11-27T16:00+09:00';
 const end = '2099-11-27T18:00+09:00';
@@ -26,6 +27,71 @@ test('rejects missing journals, invalid dates and non-KST input', (t) => {
   assert.throws(() => parseKst('2099-02-29T16:00+09:00'), /Invalid/);
   assert.throws(() => interval(end, start), /after/);
   assert.throws(() => parseKst('2099-11-27T16:00Z'), /KST/);
+});
+
+test('readiness never creates or changes a journal and returns no attempt details', (t) => {
+  const path = sandbox(t);
+  assert.throws(() => run(['status'], path), /Missing journal/);
+  assert.equal(existsSync(path), false);
+
+  const db = openJournal(path, { initialize: true });
+  try {
+    assert.equal(claim(db, slot, '관악 43-2동 104').status, 'claimed');
+  } finally {
+    db.close();
+  }
+  const before = readFileSync(path);
+  assert.deepEqual(run(['status'], path), { status: 'ready' });
+  assert.equal(run(['check', start, end], path).status, 'blocked');
+  assert.deepEqual(readFileSync(path), before);
+});
+
+test('an uncertain student click holds the full interval across restarts without granting claim authority', (t) => {
+  const path = sandbox(t);
+  const room = Buffer.from('관악 43-2동 104', 'utf8').toString('base64url');
+  const overlappingStart = '2099-11-27T17:00+09:00';
+  const overlappingEnd = '2099-11-27T19:00+09:00';
+  assert.deepEqual(run(['init'], path), { status: 'ready' });
+  assert.equal(run(['claim', start, end, room], path).status, 'claimed');
+  const hold = run(['hold', overlappingStart, overlappingEnd, room], path);
+  assert.equal(hold.status, 'held');
+  assert.ok(hold.id);
+  assert.deepEqual(run(['check', end, overlappingEnd], path), { status: 'blocked' });
+  assert.deepEqual(run(['claim', end, overlappingEnd, room], path), { status: 'blocked' });
+  assert.equal(run(['settle', hold.id, 'not-received'], path).status, 'not-received');
+  assert.deepEqual(run(['check', end, overlappingEnd], path), { status: 'clear' });
+  assert.deepEqual(run(['check', start, end], path), { status: 'blocked' });
+});
+
+test('Windows CLI keeps overlapping attempt details out of its stdout', { skip: process.platform !== 'win32' }, (t) => {
+  const stateRoot = mkdtempSync(join(process.env.SNU_TEST_TEMP || tmpdir(), 'ssims-cli-'));
+  const stateDirectory = join(stateRoot, 'SnuSsimsStudyRoom');
+  t.after(() => {
+    if (existsSync(stateDirectory)) {
+      for (const suffix of ['', '-journal', '-shm', '-wal']) {
+        rmSync(join(stateDirectory, 'attempts.sqlite') + suffix, { force: true });
+      }
+      rmdirSync(stateDirectory);
+    }
+    rmdirSync(stateRoot);
+  });
+  const script = fileURLToPath(new URL('../skills/snu-ssims-study-room/scripts/attempts.mjs', import.meta.url));
+  const command = (expectedExit, ...args) => {
+    const result = spawnSync(process.execPath, [script, ...args], {
+      encoding: 'utf8',
+      env: { ...process.env, LOCALAPPDATA: stateRoot },
+    });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, expectedExit);
+    assert.equal(result.stderr, '');
+    return JSON.parse(result.stdout);
+  };
+  const firstRoom = Buffer.from('관악 43-2동 104', 'utf8').toString('base64url');
+  const secondRoom = Buffer.from('관악 300동 403', 'utf8').toString('base64url');
+  assert.deepEqual(command(0, 'init'), { status: 'ready' });
+  assert.equal(command(0, 'claim', start, end, firstRoom).status, 'claimed');
+  assert.deepEqual(command(2, 'check', start, end), { status: 'blocked' });
+  assert.deepEqual(command(2, 'claim', start, end, secondRoom), { status: 'blocked' });
 });
 
 test('an unresolved attempt still blocks a new chat after reopening the database', (t) => {

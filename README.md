@@ -2,6 +2,8 @@
 
 서울대 공대생이 Chrome의 **예약하샤**에서 스터디룸을 찾고 무료 예약 신청을 준비하는 Codex 스킬입니다. 본인이 쓰는 Chrome 프로필로 접속하고, 신청서는 학생이 확인한 뒤 한 건만 제출합니다. [예약하샤](https://ssims.snu.ac.kr/index.do) · [서울대 정보화본부 안내](https://ist.snu.ac.kr/%EA%B3%B5%EA%B0%84%EA%B4%80%EB%A6%AC%EC%98%88%EC%95%BD%ED%95%98%EC%83%A4/)
 
+**빈 시간 조회**는 Chrome 연결과 스킬 설치만 하면 됩니다. **무료 예약 신청**까지 맡기려면 Node.js 24 이상과 같은 PC의 신청 기록이 필요합니다.
+
 ## Windows 설치
 
 1. [GitHub 소스 ZIP](https://github.com/dong6288/snu-ssims-study-room/archive/refs/heads/main.zip)을 받아 압축을 풉니다.
@@ -10,6 +12,8 @@
 4. 예약 신청까지 맡기려면 Node.js 24 이상에서 [신청 기록을 초기화](docs/INSTALL.md#무료-예약-신청-준비)합니다. 조회만 할 때는 Node 설치와 초기화가 필요 없습니다.
 
 Codex의 `$skill-installer`로 설치할 때는 `dong6288/snu-ssims-study-room` 저장소의 `skills/snu-ssims-study-room`을 지정하세요. [세부 설치법과 검증](docs/INSTALL.md)
+
+이미 설치했다면 [Windows 업데이트 안내](docs/INSTALL.md#windows에서-업데이트)를 따르세요.
 
 ## 사용 예시
 
@@ -23,7 +27,11 @@ Codex의 `$skill-installer`로 설치할 때는 `dong6288/snu-ssims-study-room` 
 
 건물을 지정하지 않으면 해당 캠퍼스의 결과를 끝까지 읽습니다. 캠퍼스를 생략하면 관악을 검색하고, `전체 캠퍼스`라고 하면 현재 계정에 표시되는 캠퍼스 탭을 순회합니다. 공간 이름, 대관 목적, 이용 자격, 운영시간, 인원과 장비를 확인합니다. 검색에 나온 공간이나 비어 보이는 달력 칸만으로 예약 가능이라고 판단하지 않습니다. [Chrome 작업 흐름](skills/snu-ssims-study-room/references/ssims.md)
 
-로그인이 필요하면 열린 Chrome에서 학생이 직접 로그인합니다. 예약 신청에는 학생의 참가자 인증과 필수 동의, 완성된 신청서에 대한 확인이 필요합니다. 제출 직전 로컬 기록을 남기고, 공식 응답이나 새 예약 내역에서 접수·승인 대기·확정을 구분합니다. 중간에 종료되면 공식 기록 확인 전까지 같은 요청을 보류합니다. 유료 공간의 신청과 결제, 중앙도서관 시설예약은 각각 공식 화면과 [중앙도서관 앱](https://lib.snu.ac.kr/about/mobile/mobile-pass/)으로 안내합니다.
+로그인과 참가자 입력·동의는 열린 Chrome에서 직접 합니다. 학번, 인증번호, 참가자 정보는 공식 화면에 입력하세요. 참가자 입력을 마치면 `예약신청하기`를 누르기 전에 채팅에 알려주세요. 스킬이 시간, 총인원, 요금 등 완성된 신청서를 보여준 뒤 제출 여부를 확인합니다.
+
+접수 또는 승인 대기 상태라면 방문 전에 예약하샤의 `나의예약현황`에서 확정 여부를 확인하세요. 인터넷이 끊기는 등 결과가 불분명하면 같은 시간대 신청을 보류하고 공식 내역부터 확인합니다. 유료 공간의 신청과 결제, 중앙도서관 시설예약은 각각 공식 화면과 [중앙도서관 앱](https://lib.snu.ac.kr/about/mobile/mobile-pass/)으로 안내합니다.
+
+스킬이 메뉴에 보이지 않으면 새 Codex 채팅을 열어 보세요. `@Chrome`이 보이지 않으면 [공식 연결 안내](https://learn.chatgpt.com/docs/chrome-extension)에 따라 Chrome 확장을 확인하세요.
 
 ## 검증
 

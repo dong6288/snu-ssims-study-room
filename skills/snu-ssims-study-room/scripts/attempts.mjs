@@ -78,12 +78,13 @@ function initializeSchema(db) {
   db.exec(`PRAGMA user_version = ${schemaVersion}`);
 }
 
-export function openJournal(path, { initialize = false } = {}) {
+export function openJournal(path, { initialize = false, readOnly = false } = {}) {
   if (!initialize && !existsSync(path)) throw new Error('Missing journal. Verify its history before initializing');
   if (initialize) mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-  const db = new DatabaseSync(path);
+  const db = new DatabaseSync(path, { readOnly });
   try {
-    db.exec('PRAGMA busy_timeout = 4000; PRAGMA synchronous = FULL');
+    db.exec('PRAGMA busy_timeout = 4000');
+    if (!readOnly) db.exec('PRAGMA synchronous = FULL');
     if (initialize) inWriteTransaction(db, () => initializeSchema(db));
     const { version, application } = schemaIdentity(db);
     if (version === 1 && application === applicationId) {
@@ -137,19 +138,22 @@ export function blockingAttempts(db, slot) {
   `).all(slot.ends, slot.starts).map(formatAttempt);
 }
 
-export function claim(db, slot, room, now = Date.now()) {
+function recordPending(db, slot, room, action, now) {
   if (typeof room !== 'string' || !room.trim() || room.length > 120 || /[\u0000-\u001f\u007f]/.test(room)) {
     throw new Error('Supply only the official campus, building and room label');
   }
-  if (slot.starts < now) throw new Error('The requested start is already in the past');
   return inWriteTransaction(db, () => {
-    const conflicts = blockingAttempts(db, slot);
-    if (conflicts.length) return { status: 'blocked', conflicts };
+    if (action === 'claimed' && blockingAttempts(db, slot).length) return { status: 'blocked' };
     const id = randomUUID();
     db.prepare(`INSERT INTO attempts (id, room, starts_at, ends_at, created_at, state)
                 VALUES (?, ?, ?, ?, ?, 'pending')`).run(id, room.trim(), slot.starts, slot.ends, now);
-    return { status: 'claimed', id };
+    return { status: action, id };
   });
+}
+
+export function claim(db, slot, room, now = Date.now()) {
+  if (slot.starts < now) throw new Error('The requested start is already in the past');
+  return recordPending(db, slot, room, 'claimed', now);
 }
 
 function decodeRoomLabel(token) {
@@ -176,18 +180,21 @@ export function settle(db, id, outcome) {
 
 export function run(args, journalPath = statePath()) {
   const [command, ...fields] = args;
-  const fieldCounts = new Map([['init', 0], ['check', 2], ['claim', 3], ['settle', 2]]);
+  const fieldCounts = new Map([['init', 0], ['status', 0], ['check', 2], ['claim', 3], ['hold', 3], ['settle', 2]]);
   if (fields.length !== fieldCounts.get(command)) {
-    throw new Error('Use init | check START END | claim START END ROOM_BASE64URL | settle ID OUTCOME');
+    throw new Error('Use init | status | check START END | claim START END ROOM_BASE64URL | hold START END ROOM_BASE64URL | settle ID OUTCOME');
   }
-  const db = openJournal(journalPath, { initialize: command === 'init' });
+  const db = openJournal(journalPath, {
+    initialize: command === 'init',
+    readOnly: command === 'status' || command === 'check',
+  });
   try {
-    if (command === 'init') return { status: 'ready' };
+    if (command === 'init' || command === 'status') return { status: 'ready' };
     if (command === 'settle') return settle(db, ...fields);
     const slot = interval(fields[0], fields[1]);
     if (command === 'claim') return claim(db, slot, decodeRoomLabel(fields[2]));
-    const conflicts = blockingAttempts(db, slot);
-    return { status: conflicts.length ? 'blocked' : 'clear', conflicts };
+    if (command === 'hold') return recordPending(db, slot, decodeRoomLabel(fields[2]), 'held', Date.now());
+    return { status: blockingAttempts(db, slot).length ? 'blocked' : 'clear' };
   } finally {
     db.close();
   }

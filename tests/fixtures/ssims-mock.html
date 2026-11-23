@@ -76,7 +76,7 @@ const approvedForm = () => ({
 
 byId('application').onsubmit = event => {
   event.preventDefault();
-  if (!verified || String(input.attemptId ?? '') === '') return;
+  if (input.mode !== 'student-submit' && (!verified || String(input.attemptId ?? '') === '')) return;
   mockPosts += 1;
   if (input.response === 'timeout') return;
   const state = input.response === 'instant' ? '예약 확정' : '승인 대기';
@@ -104,6 +104,7 @@ if (candidate && input.mode !== 'lookup') {
 }
 verified = Boolean(preview) && JSON.stringify(preview) === JSON.stringify(input.approval);
 if (input.mode === 'submit' && verified) byId('submit').click();
+if (input.mode === 'student-submit' && preview) byId('submit').click();
 const roomBytes = new TextEncoder().encode(candidate ?? '');
 const roomToken = btoa(Array.from(roomBytes, byte => String.fromCharCode(byte)).join(''))
   .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');

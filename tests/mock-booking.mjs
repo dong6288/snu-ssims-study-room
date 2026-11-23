@@ -42,6 +42,7 @@ try {
   assert.equal(lookup.candidate, '관악 43-2동 104');
   assert.equal(lookup.preview, null);
   assert.equal(lookup.mockPosts, 0);
+  assert.deepEqual(run(['status'], journalPath), { status: 'ready' });
   const prepared = await browserCase('prepare', { ...initial, mode: 'prepare' });
   assert.equal(prepared.preview.room, lookup.candidate);
   assert.equal(prepared.preview.count, 4);
@@ -71,10 +72,20 @@ try {
   assert.equal(delayed.mockPosts, 1);
   assert.equal(delayed.historyCount, 0);
   assert.equal(delayed.receipt, null);
-  const restartCheck = run(['check', later.start, later.end], journalPath);
-  assert.equal(restartCheck.conflicts[0].state, 'pending');
-  assert.equal(run(['claim', later.start, later.end, lookup.roomToken], journalPath).status, 'blocked');
-  console.log('PASS: installed skill, mock sign-in, complete two-page lookup, form approval, one submit, confirmed receipt, changed preview rejected, timeout replay blocked');
+  assert.deepEqual(run(['check', later.start, later.end], journalPath), { status: 'blocked' });
+  assert.deepEqual(run(['claim', later.start, later.end, lookup.roomToken], journalPath), { status: 'blocked' });
+
+  const manual = { ...initial, start: later.end, end: '2099-11-27T22:00+09:00' };
+  assert.deepEqual(run(['check', manual.start, manual.end], journalPath), { status: 'clear' });
+  const studentClick = await browserCase('student-click', { ...manual, mode: 'student-submit', response: 'timeout' });
+  assert.equal(studentClick.verified, false);
+  assert.equal(studentClick.mockPosts, 1);
+  assert.equal(studentClick.historyCount, 0);
+  assert.equal(studentClick.receipt, null);
+  assert.equal(run(['hold', manual.start, manual.end, studentClick.roomToken], journalPath).status, 'held');
+  assert.deepEqual(run(['check', manual.start, manual.end], journalPath), { status: 'blocked' });
+  assert.deepEqual(run(['claim', manual.start, manual.end, studentClick.roomToken], journalPath), { status: 'blocked' });
+  console.log('PASS: installed skill, mock sign-in, complete two-page lookup, journal readiness, form approval, one submit, confirmed receipt, changed preview rejected, both timeout replays blocked');
 } finally {
   const target = await realpath(scratch);
   if (dirname(target) !== base || !basename(target).startsWith('ssims-mock-')) {
