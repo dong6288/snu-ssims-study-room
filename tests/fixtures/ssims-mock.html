@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; connect-src 'none'; form-action 'none'">
+<title>예약하샤 모의 화면</title>
+<main>
+  <h1>예약하샤 모의 화면</h1>
+  <section id="login"><button id="sign-in">가상 사용자 로그인 완료</button></section>
+  <section id="lookup" hidden>
+    <label>캠퍼스 <select id="zone"><option>관악</option><option>연건</option></select></label>
+    <label>건물 <select id="building"><option>전체</option><option>44-1동</option></select></label>
+    <button id="search">검색</button>
+    <button id="next" hidden>다음 페이지</button>
+    <ul id="rooms"></ul>
+  </section>
+  <form id="application" hidden>
+    <h2 id="room-name"></h2>
+    <label>예약제목 <input id="title" required></label>
+    <label>예약내용 <textarea id="body" required></textarea></label>
+    <label>총 인원수 <input type="number" id="count" min="1" required></label>
+    <label><input type="checkbox" id="consent" required> 가상 동의</label>
+    <button id="submit" type="submit">예약신청하기</button>
+  </form>
+  <ul id="history"></ul>
+  <pre id="result"></pre>
+</main>
+<script type="application/json" id="input">__INPUT__</script>
+<script>
+const input = JSON.parse(document.getElementById('input').textContent);
+const byId = id => document.getElementById(id);
+const rooms = {
+  1: { name: '관악 44-1동 401-1', conflict: true, capacity: 4 },
+  2: { name: '관악 43-2동 104', conflict: false, capacity: 7 },
+};
+let currentRoom;
+let page = 0;
+let mockPosts = 0;
+let receipt = null;
+let verified;
+const pages = [];
+
+byId('sign-in').onclick = () => {
+  byId('login').hidden = true;
+  byId('lookup').hidden = false;
+};
+function showPage(number) {
+  page = number;
+  pages.push(page);
+  currentRoom = rooms[page];
+  const roomButton = document.createElement('button');
+  roomButton.textContent = currentRoom.name;
+  roomButton.dataset.conflict = String(currentRoom.conflict);
+  roomButton.dataset.capacity = String(currentRoom.capacity);
+  roomButton.onclick = () => {
+    byId('application').hidden = false;
+    byId('room-name').textContent = currentRoom.name;
+  };
+  const row = document.createElement('li');
+  row.append(roomButton);
+  byId('rooms').replaceChildren(row);
+  byId('next').hidden = page === 2;
+}
+byId('search').onclick = () => showPage(1);
+byId('next').onclick = () => showPage(2);
+
+const approvedForm = () => ({
+  room: byId('room-name').textContent,
+  start: input.start,
+  end: input.end,
+  title: byId('title').value,
+  body: byId('body').value,
+  count: Number(byId('count').value),
+  consent: byId('consent').checked,
+  fee: 0,
+});
+
+byId('application').onsubmit = event => {
+  event.preventDefault();
+  if (!verified || String(input.attemptId ?? '') === '') return;
+  mockPosts += 1;
+  if (input.response === 'timeout') return;
+  const state = input.response === 'instant' ? '예약 확정' : '승인 대기';
+  receipt = { id: 'MOCK-001', state, room: currentRoom.name, start: input.start, end: input.end };
+  const row = document.createElement('li');
+  row.textContent = receipt.id + ' ' + receipt.state;
+  byId('history').append(row);
+};
+
+byId('sign-in').click();
+byId('search').click();
+const firstConflict = byId('rooms').querySelector('button').dataset.conflict === 'true';
+byId('next').click();
+const room = byId('rooms').querySelector('button');
+const candidate = room.dataset.conflict === 'false' && Number(room.dataset.capacity) >= input.count ? room.textContent : null;
+let preview = null;
+if (candidate && input.mode !== 'lookup') {
+  room.click();
+  byId('title').value = '가상 발표 연습';
+  byId('body').value = '가상 검증용 신청서';
+  byId('count').value = String(input.count);
+  byId('consent').click();
+  if (input.changeTitle) byId('title').value = '변경된 제목';
+  preview = approvedForm();
+}
+verified = Boolean(preview) && JSON.stringify(preview) === JSON.stringify(input.approval);
+if (input.mode === 'submit' && verified) byId('submit').click();
+const roomBytes = new TextEncoder().encode(candidate ?? '');
+const roomToken = btoa(Array.from(roomBytes, byte => String.fromCharCode(byte)).join(''))
+  .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
+byId('result').textContent = JSON.stringify({
+  firstConflict, pages, candidate, preview, verified, roomToken, mockPosts, receipt,
+  signedIn: byId('login').hidden,
+  historyCount: byId('history').children.length,
+});
+</script>
+</html>
