@@ -32,7 +32,7 @@ async function browserCase(name, input) {
   return JSON.parse(result);
 }
 
-const initial = { start: '2099-11-27T16:00+09:00', end: '2099-11-27T18:00+09:00', count: 4 };
+const initial = { start: '2099-11-27T16:00+09:00', end: '2099-11-27T18:00+09:00', count: 5 };
 try {
   assert.equal(run(['init'], journalPath).status, 'ready');
   const lookup = await browserCase('lookup', { ...initial, mode: 'lookup' });
@@ -43,9 +43,21 @@ try {
   assert.equal(lookup.preview, null);
   assert.equal(lookup.mockPosts, 0);
   assert.deepEqual(run(['status'], journalPath), { status: 'ready' });
+  const applicantOnly = await browserCase('applicant-only', {
+    ...initial, count: 1, capacityNeeded: 5, mode: 'prepare',
+  });
+  assert.equal(applicantOnly.candidate, lookup.candidate);
+  assert.equal(applicantOnly.additionalAttendees, 0);
+  assert.equal(applicantOnly.preview.count, 1);
+  assert.equal(applicantOnly.mockPosts, 0);
+  const tooSmall = await browserCase('capacity', { ...initial, count: 1, capacityNeeded: 8, mode: 'prepare' });
+  assert.equal(tooSmall.candidate, null);
+  assert.equal(tooSmall.preview, null);
+  assert.equal(tooSmall.mockPosts, 0);
   const prepared = await browserCase('prepare', { ...initial, mode: 'prepare' });
   assert.equal(prepared.preview.room, lookup.candidate);
-  assert.equal(prepared.preview.count, 4);
+  assert.equal(prepared.additionalAttendees, 4);
+  assert.equal(prepared.preview.count, 5);
   assert.equal(prepared.mockPosts, 0);
   const firstClaim = run(['claim', initial.start, initial.end, lookup.roomToken], journalPath);
   assert.equal(firstClaim.status, 'claimed');
@@ -63,6 +75,29 @@ try {
   const changed = await browserCase('changed', { ...initial, mode: 'submit', approval: prepared.preview, attemptId: firstClaim.id, changeTitle: true });
   assert.equal(changed.verified, false);
   assert.equal(changed.mockPosts, 0);
+  const changedCount = await browserCase('changed-count', {
+    ...initial, count: 1, mode: 'submit', approval: prepared.preview, attemptId: firstClaim.id,
+  });
+  assert.equal(changedCount.preview.count, 1);
+  assert.equal(changedCount.verified, false);
+  assert.equal(changedCount.mockPosts, 0);
+
+  const cancellation = { ...initial, mode: 'cancel', existingReceipt: booked.receipt, cancelTarget: booked.receipt };
+  const wrongTarget = await browserCase('cancel-wrong-receipt', {
+    ...cancellation, cancelTarget: { ...booked.receipt, id: 'MOCK-OTHER' },
+  });
+  assert.equal(wrongTarget.cancelClicks, 0);
+  assert.equal(wrongTarget.receipt.state, '예약 확정');
+  const cancelled = await browserCase('cancel-confirmed', cancellation);
+  assert.equal(cancelled.cancelClicks, 1);
+  assert.deepEqual(cancelled.receipt, { ...booked.receipt, state: '취소' });
+  assert.equal(run(['settle', firstClaim.id, 'cancelled'], journalPath).status, 'cancelled');
+  assert.deepEqual(run(['check', initial.start, initial.end], journalPath), { status: 'clear' });
+  const alreadyCancelled = await browserCase('cancel-already-cancelled', {
+    ...cancellation, existingReceipt: cancelled.receipt,
+  });
+  assert.equal(alreadyCancelled.cancelClicks, 0);
+  assert.equal(alreadyCancelled.receipt.state, '취소');
 
   const later = { ...initial, start: initial.end, end: '2099-11-27T20:00+09:00' };
   const laterApproval = { ...prepared.preview, start: later.start, end: later.end };
@@ -85,7 +120,28 @@ try {
   assert.equal(run(['hold', manual.start, manual.end, studentClick.roomToken], journalPath).status, 'held');
   assert.deepEqual(run(['check', manual.start, manual.end], journalPath), { status: 'blocked' });
   assert.deepEqual(run(['claim', manual.start, manual.end, studentClick.roomToken], journalPath), { status: 'blocked' });
-  console.log('PASS: installed skill, mock sign-in, complete two-page lookup, journal readiness, form approval, one submit, confirmed receipt, changed preview rejected, both timeout replays blocked');
+
+  const uncertainSlot = { ...initial, start: manual.end, end: '2099-11-27T23:00+09:00' };
+  const uncertainReceipt = { ...booked.receipt, id: 'MOCK-UNCERTAIN', start: uncertainSlot.start, end: uncertainSlot.end };
+  const existing = run(['claim', uncertainSlot.start, uncertainSlot.end, lookup.roomToken], journalPath);
+  assert.equal(existing.status, 'claimed');
+  assert.equal(run(['settle', existing.id, 'received'], journalPath).status, 'received');
+  const missingReceipt = await browserCase('cancel-timeout', {
+    ...uncertainSlot, mode: 'cancel', existingReceipt: uncertainReceipt, cancelTarget: uncertainReceipt, response: 'timeout',
+  });
+  assert.equal(missingReceipt.cancelClicks, 1);
+  assert.equal(missingReceipt.receipt, null);
+  assert.equal(missingReceipt.historyCount, 0);
+  assert.deepEqual(run(['check', uncertainSlot.start, uncertainSlot.end], journalPath), { status: 'blocked' });
+  const processingCancellation = await browserCase('cancel-already-processing', {
+    ...uncertainSlot, mode: 'cancel', existingReceipt: { ...uncertainReceipt, state: '취소 처리 중' },
+    cancelTarget: uncertainReceipt,
+  });
+  assert.equal(processingCancellation.cancelActionOffered, true);
+  assert.equal(processingCancellation.cancelClicks, 0);
+  assert.equal(processingCancellation.receipt.state, '취소 처리 중');
+  assert.deepEqual(run(['check', uncertainSlot.start, uncertainSlot.end], journalPath), { status: 'blocked' });
+  console.log('PASS: booking and duplicate checks, exact cancellation, and no repeat on cancelled, processing or unresolved records');
 } finally {
   const target = await realpath(scratch);
   if (dirname(target) !== base || !basename(target).startsWith('ssims-mock-')) {

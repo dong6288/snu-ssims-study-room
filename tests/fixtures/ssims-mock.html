@@ -17,7 +17,8 @@
     <h2 id="room-name"></h2>
     <label>예약제목 <input id="title" required></label>
     <label>예약내용 <textarea id="body" required></textarea></label>
-    <label>총 인원수 <input type="number" id="count" min="1" required></label>
+    <label>참여자 수 <select id="guests"></select></label>
+    <label>총 인원수 <output id="count">1</output></label>
     <label><input type="checkbox" id="consent" required> 가상 동의</label>
     <button id="submit" type="submit">예약신청하기</button>
   </form>
@@ -36,6 +37,8 @@ let currentRoom;
 let page = 0;
 let mockPosts = 0;
 let receipt = null;
+let cancelClicks = 0;
+let cancelActionOffered = false;
 let verified;
 const pages = [];
 
@@ -54,6 +57,9 @@ function showPage(number) {
   roomButton.onclick = () => {
     byId('application').hidden = false;
     byId('room-name').textContent = currentRoom.name;
+    const guestOptions = Array.from({ length: currentRoom.capacity }, (_, guests) => new Option(String(guests), String(guests)));
+    byId('guests').replaceChildren(...guestOptions);
+    byId('guests').onchange();
   };
   const row = document.createElement('li');
   row.append(roomButton);
@@ -62,6 +68,9 @@ function showPage(number) {
 }
 byId('search').onclick = () => showPage(1);
 byId('next').onclick = () => showPage(2);
+byId('guests').onchange = () => {
+  byId('count').value = String(1 + Number(byId('guests').value));
+};
 
 const approvedForm = () => ({
   room: byId('room-name').textContent,
@@ -86,18 +95,46 @@ byId('application').onsubmit = event => {
   byId('history').append(row);
 };
 
+function cancelExistingReceipt() {
+  receipt = input.existingReceipt;
+  const row = document.createElement('li');
+  row.textContent = receipt.id + ' ' + receipt.state;
+  byId('history').append(row);
+  if (!['예약 확정', '취소 처리 중'].includes(receipt.state)) return;
+  const button = document.createElement('button');
+  button.textContent = '예약취소';
+  row.append(button);
+  cancelActionOffered = true;
+  button.onclick = () => {
+    cancelClicks += 1;
+    if (input.response === 'timeout') {
+      receipt = null;
+      row.remove();
+      return;
+    }
+    receipt = { ...receipt, state: '취소' };
+    row.textContent = receipt.id + ' ' + receipt.state;
+  };
+  if (receipt.state === '예약 확정' &&
+      ['id', 'room', 'start', 'end'].every(field => receipt[field] === input.cancelTarget[field])) {
+    button.click();
+  }
+}
+
 byId('sign-in').click();
 byId('search').click();
 const firstConflict = byId('rooms').querySelector('button').dataset.conflict === 'true';
 byId('next').click();
 const room = byId('rooms').querySelector('button');
-const candidate = room.dataset.conflict === 'false' && Number(room.dataset.capacity) >= input.count ? room.textContent : null;
+const capacityNeeded = Math.max(input.count, input.capacityNeeded ?? input.count);
+const candidate = room.dataset.conflict === 'false' && Number(room.dataset.capacity) >= capacityNeeded ? room.textContent : null;
 let preview = null;
-if (candidate && input.mode !== 'lookup') {
+if (candidate && input.mode !== 'lookup' && input.mode !== 'cancel') {
   room.click();
   byId('title').value = '가상 발표 연습';
   byId('body').value = '가상 검증용 신청서';
-  byId('count').value = String(input.count);
+  byId('guests').value = String(input.count - 1);
+  byId('guests').dispatchEvent(new Event('change'));
   byId('consent').click();
   if (input.changeTitle) byId('title').value = '변경된 제목';
   preview = approvedForm();
@@ -105,11 +142,13 @@ if (candidate && input.mode !== 'lookup') {
 verified = Boolean(preview) && JSON.stringify(preview) === JSON.stringify(input.approval);
 if (input.mode === 'submit' && verified) byId('submit').click();
 if (input.mode === 'student-submit' && preview) byId('submit').click();
+if (input.mode === 'cancel') cancelExistingReceipt();
 const roomBytes = new TextEncoder().encode(candidate ?? '');
 const roomToken = btoa(Array.from(roomBytes, byte => String.fromCharCode(byte)).join(''))
   .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 byId('result').textContent = JSON.stringify({
-  firstConflict, pages, candidate, preview, verified, roomToken, mockPosts, receipt,
+  firstConflict, pages, candidate, preview, verified, roomToken, mockPosts, receipt, cancelClicks, cancelActionOffered,
+  additionalAttendees: preview ? Number(byId('guests').value) : null,
   signedIn: byId('login').hidden,
   historyCount: byId('history').children.length,
 });
