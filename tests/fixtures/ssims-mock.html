@@ -19,9 +19,14 @@
     <label>예약내용 <textarea id="body" required></textarea></label>
     <label>참여자 수 <select id="guests"></select></label>
     <label>총 인원수 <output id="count">1</output></label>
-    <label><input type="checkbox" id="consent" required> 가상 동의</label>
+    <label><input type="checkbox" id="personal-consent" required> 개인정보 수집 및 이용동의</label>
+    <label><input type="checkbox" id="space-consent" required> 공간 사용 안내사항</label>
     <button id="submit" type="submit">예약신청하기</button>
   </form>
+  <dialog id="confirmation">
+    <p id="confirmation-summary"></p>
+    <button id="confirm">동의하고 예약신청</button>
+  </dialog>
   <ul id="history"></ul>
   <pre id="result"></pre>
 </main>
@@ -39,8 +44,14 @@ let mockPosts = 0;
 let receipt = null;
 let cancelClicks = 0;
 let cancelActionOffered = false;
+let consentClicks = 0;
+let confirmationClicks = 0;
 let verified;
 const pages = [];
+for (const id of ['personal-consent', 'space-consent']) {
+  byId(id).checked = Boolean(input.precheckedConsents);
+  byId(id).onclick = () => { consentClicks += 1; };
+}
 
 byId('sign-in').onclick = () => {
   byId('login').hidden = true;
@@ -72,20 +83,19 @@ byId('guests').onchange = () => {
   byId('count').value = String(1 + Number(byId('guests').value));
 };
 
-const approvedForm = () => ({
+const currentForm = () => ({
   room: byId('room-name').textContent,
   start: input.start,
   end: input.end,
   title: byId('title').value,
   body: byId('body').value,
   count: Number(byId('count').value),
-  consent: byId('consent').checked,
+  personalDataConsent: byId('personal-consent').checked,
+  spaceUseAcknowledgment: byId('space-consent').checked,
   fee: 0,
 });
 
-byId('application').onsubmit = event => {
-  event.preventDefault();
-  if (input.mode !== 'student-submit' && (!verified || String(input.attemptId ?? '') === '')) return;
+function receiveApplication() {
   mockPosts += 1;
   if (input.response === 'timeout') return;
   const state = input.response === 'instant' ? '예약 확정' : '승인 대기';
@@ -93,6 +103,26 @@ byId('application').onsubmit = event => {
   const row = document.createElement('li');
   row.textContent = receipt.id + ' ' + receipt.state;
   byId('history').append(row);
+}
+byId('application').onsubmit = event => {
+  event.preventDefault();
+  if (input.mode !== 'student-submit' && (!verified || String(input.attemptId ?? '') === '')) return;
+  if (input.confirmationDialog) {
+    const end = input.confirmationChange === 'time' ? '2099-11-28T18:30+09:00' : input.end;
+    const price = input.confirmationChange === 'fee' ? '1,000원' : '무료';
+    byId('confirmation-summary').textContent = input.confirmationStyle === 'simple'
+      ? '예약을 신청하시겠습니까?'
+      : currentRoom.name + ' ' + input.start + ' ' + end + ' ' + price;
+    byId('confirmation').showModal();
+    return;
+  }
+  receiveApplication();
+};
+byId('confirm').onclick = () => {
+  if (!byId('confirmation').open || !verified) return;
+  confirmationClicks += 1;
+  byId('confirmation').close();
+  receiveApplication();
 };
 
 function cancelExistingReceipt() {
@@ -135,12 +165,23 @@ if (candidate && input.mode !== 'lookup' && input.mode !== 'cancel') {
   byId('body').value = '가상 검증용 신청서';
   byId('guests').value = String(input.count - 1);
   byId('guests').dispatchEvent(new Event('change'));
-  byId('consent').click();
+  if (!input.declineConsent) {
+    for (const id of ['personal-consent', 'space-consent']) {
+      if (!byId(id).checked) byId(id).click();
+    }
+  }
   if (input.changeTitle) byId('title').value = '변경된 제목';
-  preview = approvedForm();
+  preview = currentForm();
 }
-verified = Boolean(preview) && JSON.stringify(preview) === JSON.stringify(input.approval);
-if (input.mode === 'submit' && verified) byId('submit').click();
+verified = !input.declineConsent && Boolean(preview) && JSON.stringify(preview) === JSON.stringify(input.expectedForm);
+if (input.mode === 'submit' && verified) {
+  byId('submit').click();
+  if (byId('confirmation').open) {
+    const summary = byId('confirmation-summary').textContent;
+    const expectedSummary = currentRoom.name + ' ' + input.start + ' ' + input.end + ' 무료';
+    if (summary === '예약을 신청하시겠습니까?' || summary === expectedSummary) byId('confirm').click();
+  }
+}
 if (input.mode === 'student-submit' && preview) byId('submit').click();
 if (input.mode === 'cancel') cancelExistingReceipt();
 const roomBytes = new TextEncoder().encode(candidate ?? '');
@@ -148,6 +189,7 @@ const roomToken = btoa(Array.from(roomBytes, byte => String.fromCharCode(byte)).
   .replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '');
 byId('result').textContent = JSON.stringify({
   firstConflict, pages, candidate, preview, verified, roomToken, mockPosts, receipt, cancelClicks, cancelActionOffered,
+  consentClicks, confirmationClicks,
   additionalAttendees: preview ? Number(byId('guests').value) : null,
   signedIn: byId('login').hidden,
   historyCount: byId('history').children.length,

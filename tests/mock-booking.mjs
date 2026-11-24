@@ -42,6 +42,7 @@ try {
   assert.equal(lookup.candidate, '관악 43-2동 104');
   assert.equal(lookup.preview, null);
   assert.equal(lookup.mockPosts, 0);
+  assert.equal(lookup.consentClicks, 0);
   assert.deepEqual(run(['status'], journalPath), { status: 'ready' });
   const applicantOnly = await browserCase('applicant-only', {
     ...initial, count: 1, capacityNeeded: 5, mode: 'prepare',
@@ -58,25 +59,51 @@ try {
   assert.equal(prepared.preview.room, lookup.candidate);
   assert.equal(prepared.additionalAttendees, 4);
   assert.equal(prepared.preview.count, 5);
+  assert.equal(prepared.preview.personalDataConsent, true);
+  assert.equal(prepared.preview.spaceUseAcknowledgment, true);
+  assert.equal(prepared.consentClicks, 2);
   assert.equal(prepared.mockPosts, 0);
+  const prechecked = await browserCase('prechecked', { ...initial, mode: 'prepare', precheckedConsents: true });
+  assert.equal(prechecked.preview.personalDataConsent, true);
+  assert.equal(prechecked.preview.spaceUseAcknowledgment, true);
+  assert.equal(prechecked.consentClicks, 0);
+  assert.equal(prechecked.mockPosts, 0);
+  const declined = await browserCase('declined', {
+    ...initial, mode: 'submit', declineConsent: true, expectedForm: prepared.preview, attemptId: 'unused',
+  });
+  assert.equal(declined.preview.personalDataConsent, false);
+  assert.equal(declined.preview.spaceUseAcknowledgment, false);
+  assert.equal(declined.consentClicks, 0);
+  assert.equal(declined.mockPosts, 0);
+  const withdrawn = await browserCase('withdrawn-prechecked', {
+    ...initial, mode: 'submit', declineConsent: true, precheckedConsents: true,
+    expectedForm: prepared.preview, attemptId: 'unused',
+  });
+  assert.equal(withdrawn.preview.personalDataConsent, true);
+  assert.equal(withdrawn.preview.spaceUseAcknowledgment, true);
+  assert.equal(withdrawn.verified, false);
+  assert.equal(withdrawn.consentClicks, 0);
+  assert.equal(withdrawn.mockPosts, 0);
   const firstClaim = run(['claim', initial.start, initial.end, lookup.roomToken], journalPath);
   assert.equal(firstClaim.status, 'claimed');
   const booked = await browserCase('approved', {
-    ...initial, mode: 'submit', approval: prepared.preview, attemptId: firstClaim.id, response: 'instant',
+    ...initial, mode: 'submit', expectedForm: prepared.preview, attemptId: firstClaim.id, response: 'instant', confirmationDialog: true,
   });
   assert.equal(booked.verified, true);
   assert.equal(booked.mockPosts, 1);
+  assert.equal(booked.consentClicks, 2);
+  assert.equal(booked.confirmationClicks, 1);
   assert.deepEqual(booked.receipt, {
     id: 'MOCK-001', state: '예약 확정', room: lookup.candidate, start: initial.start, end: initial.end,
   });
   assert.equal(run(['settle', firstClaim.id, 'received'], journalPath).status, 'received');
   assert.equal(run(['claim', initial.start, initial.end, lookup.roomToken], journalPath).status, 'blocked');
 
-  const changed = await browserCase('changed', { ...initial, mode: 'submit', approval: prepared.preview, attemptId: firstClaim.id, changeTitle: true });
+  const changed = await browserCase('changed', { ...initial, mode: 'submit', expectedForm: prepared.preview, attemptId: firstClaim.id, changeTitle: true });
   assert.equal(changed.verified, false);
   assert.equal(changed.mockPosts, 0);
   const changedCount = await browserCase('changed-count', {
-    ...initial, count: 1, mode: 'submit', approval: prepared.preview, attemptId: firstClaim.id,
+    ...initial, count: 1, mode: 'submit', expectedForm: prepared.preview, attemptId: firstClaim.id,
   });
   assert.equal(changedCount.preview.count, 1);
   assert.equal(changedCount.verified, false);
@@ -100,10 +127,10 @@ try {
   assert.equal(alreadyCancelled.receipt.state, '취소');
 
   const later = { ...initial, start: initial.end, end: '2099-11-27T20:00+09:00' };
-  const laterApproval = { ...prepared.preview, start: later.start, end: later.end };
+  const laterForm = { ...prepared.preview, start: later.start, end: later.end };
   const pending = run(['claim', later.start, later.end, lookup.roomToken], journalPath);
   assert.equal(pending.status, 'claimed');
-  const delayed = await browserCase('delayed', { ...later, mode: 'submit', approval: laterApproval, attemptId: pending.id, response: 'timeout' });
+  const delayed = await browserCase('delayed', { ...later, mode: 'submit', expectedForm: laterForm, attemptId: pending.id, response: 'timeout' });
   assert.equal(delayed.mockPosts, 1);
   assert.equal(delayed.historyCount, 0);
   assert.equal(delayed.receipt, null);
@@ -141,7 +168,36 @@ try {
   assert.equal(processingCancellation.cancelClicks, 0);
   assert.equal(processingCancellation.receipt.state, '취소 처리 중');
   assert.deepEqual(run(['check', uncertainSlot.start, uncertainSlot.end], journalPath), { status: 'blocked' });
-  console.log('PASS: booking and duplicate checks, exact cancellation, and no repeat on cancelled, processing or unresolved records');
+  const firstRequest = { start: '2099-11-28T16:00+09:00', end: '2099-11-28T18:00+09:00', count: 1 };
+  const firstRequestForm = {
+    room: '관악 43-2동 104', start: firstRequest.start, end: firstRequest.end,
+    title: '가상 발표 연습', body: '가상 검증용 신청서', count: 1,
+    personalDataConsent: true, spaceUseAcknowledgment: true, fee: 0,
+  };
+  const directClaim = run(['claim', firstRequest.start, firstRequest.end, lookup.roomToken], journalPath);
+  assert.equal(directClaim.status, 'claimed');
+  for (const confirmationChange of ['fee', 'time']) {
+    const changedConfirmation = await browserCase('changed-confirmation-' + confirmationChange, {
+      ...firstRequest, mode: 'submit', expectedForm: firstRequestForm, attemptId: directClaim.id,
+      confirmationDialog: true, confirmationChange, response: 'instant',
+    });
+    assert.equal(changedConfirmation.verified, true);
+    assert.equal(changedConfirmation.consentClicks, 2);
+    assert.equal(changedConfirmation.confirmationClicks, 0);
+    assert.equal(changedConfirmation.mockPosts, 0);
+    assert.equal(changedConfirmation.receipt, null);
+  }
+  const direct = await browserCase('first-request', {
+    ...firstRequest, mode: 'submit', expectedForm: firstRequestForm, attemptId: directClaim.id,
+    confirmationDialog: true, confirmationStyle: 'simple', response: 'instant',
+  });
+  assert.equal(direct.consentClicks, 2);
+  assert.equal(direct.confirmationClicks, 1);
+  assert.equal(direct.mockPosts, 1);
+  assert.equal(direct.receipt.state, '예약 확정');
+  assert.equal(run(['settle', directClaim.id, 'received'], journalPath).status, 'received');
+  assert.deepEqual(run(['claim', firstRequest.start, firstRequest.end, lookup.roomToken], journalPath), { status: 'blocked' });
+  console.log('PASS: two acknowledgments, detailed and simple confirmations, changed fee/time blocked, first-request submission, refusal and withdrawal, cancellation and duplicate protection');
 } finally {
   const target = await realpath(scratch);
   if (dirname(target) !== base || !basename(target).startsWith('ssims-mock-')) {
